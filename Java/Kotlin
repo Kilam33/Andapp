@@ -1,0 +1,434 @@
+import android.content.ContentValues;
+import android.content.Context;
+import android.content.Intent;
+import android.database.Cursor;
+import android.database.SQLException;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
+import android.os.Bundle;
+import android.view.View;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.ListView;
+import android.widget.TextView;
+import android.widget.Toast;
+import androidx.appcompat.app.AppCompatActivity;
+import com.squareup.picasso.Picasso;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
+
+// MainActivity.java
+public class MainActivity extends AppCompatActivity {
+
+    private EditText usernameEditText;
+    private Button registerButton;
+    private DatabaseHelper dbHelper;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        usernameEditText = findViewById(R.id.username);
+        registerButton = findViewById(R.id.register_button);
+        dbHelper = new DatabaseHelper(this);
+
+        registerButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                String username = usernameEditText.getText().toString().trim();
+                if (!username.isEmpty()) {
+                    addUser(username);
+                    startActivity(new Intent(MainActivity.this, ProductListActivity.class));
+                } else {
+                    Toast.makeText(MainActivity.this, "Please enter a username", Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+    }
+
+    private void addUser(String username) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues values = new ContentValues();
+        values.put("username", username);
+        db.insert("users", null, values);
+        db.close();
+    }
+}
+
+// ProductListActivity.java
+public class ProductListActivity extends AppCompatActivity {
+
+    private ListView productListView;
+    private DatabaseHelper dbHelper;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_product_list);
+
+        productListView = findViewById(R.id.product_list);
+        dbHelper = new DatabaseHelper(this);
+
+        loadProducts();
+    }
+
+    private void loadProducts() {
+        List<Product> products = new ArrayList<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor cursor = db.query("products", null, null, null, null, null, null);
+
+        if (cursor.moveToFirst()) {
+            do {
+                int id = cursor.getInt(cursor.getColumnIndex("id"));
+                String name = cursor.getString(cursor.getColumnIndex("name"));
+                String description = cursor.getString(cursor.getColumnIndex("description"));
+                double price = cursor.getDouble(cursor.getColumnIndex("price"));
+                String imageUrl = cursor.getString(cursor.getColumnIndex("image_url"));
+                String whatsappContact = cursor.getString(cursor.getColumnIndex("whatsapp_contact"));
+                String phoneContact = cursor.getString(cursor.getColumnIndex("phone_contact"));
+                products.add(new Product(id, name, description, price, imageUrl, whatsappContact, phoneContact));
+            } while (cursor.moveToNext());
+        }
+        cursor.close();
+        db.close();
+
+        ProductAdapter adapter = new ProductAdapter(this, products);
+        productListView.setAdapter(adapter);
+
+        productListView.setOnItemClickListener((parent, view, position, id) -> {
+            Product product = products.get(position);
+            Intent intent = new Intent(ProductListActivity.this, ProductDetailActivity.class);
+            intent.putExtra("product", product);
+            startActivity(intent);
+        });
+    }
+}
+
+// ProductDetailActivity.java
+public class ProductDetailActivity extends AppCompatActivity {
+
+    private ImageView productImageView;
+    private TextView productNameTextView;
+    private TextView productDescriptionTextView;
+    private TextView productPriceTextView;
+    private Button whatsappButton;
+    private Button phoneButton;
+    private Product product;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_product_detail);
+
+        productImageView = findViewById(R.id.product_image);
+        productNameTextView = findViewById(R.id.product_name);
+        productDescriptionTextView = findViewById(R.id.product_description);
+        productPriceTextView = findViewById(R.id.product_price);
+        whatsappButton = findViewById(R.id.whatsapp_button);
+        phoneButton = findViewById(R.id.phone_button);
+
+        product = (Product) getIntent().getSerializableExtra("product");
+
+        if (product != null) {
+            Picasso.get().load(product.getImageUrl()).into(productImageView);
+            productNameTextView.setText(product.getName());
+            productDescriptionTextView.setText(product.getDescription());
+            productPriceTextView.setText(String.valueOf(product.getPrice()));
+
+            whatsappButton.setOnClickListener(v -> openWhatsApp(product.getWhatsappContact()));
+            phoneButton.setOnClickListener(v -> makePhoneCall(product.getPhoneContact()));
+        }
+    }
+
+    private void openWhatsApp(String contact) {
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setData(Uri.parse("https://wa.me/" + contact));
+        startActivity(intent);
+    }
+
+    private void makePhoneCall(String contact) {
+        Intent intent = new Intent(Intent.ACTION_DIAL);
+        intent.setData(Uri.parse("tel:" + contact));
+        startActivity(intent);
+    }
+}
+
+// DatabaseHelper.java
+public class DatabaseHelper extends SQLiteOpenHelper {
+
+    private static final String DATABASE_NAME = "phone_store.db";
+    private static final int DATABASE_VERSION = 1;
+    private static final String DATABASE_PATH = "/data/data/YOUR_PACKAGE_NAME/databases/";
+    private final Context context;
+
+    public DatabaseHelper(Context context) {
+        super(context, DATABASE_NAME, null, DATABASE_VERSION);
+        this.context = context;
+        createDatabase();
+    }
+
+    private void createDatabase() {
+        boolean dbExist = checkDatabase();
+        if (!dbExist) {
+            this.getReadableDatabase();
+            try {
+                copyDatabase();
+            } catch (IOException e) {
+                throw new Error("Error copying database");
+            }
+        }
+    }
+
+    private boolean checkDatabase() {
+        SQLiteDatabase checkDB = null;
+        try {
+            String path = DATABASE_PATH + DATABASE_NAME;
+            checkDB = SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READONLY);
+        } catch (Exception e) {
+            // Database does not exist yet
+        }
+        if (checkDB != null) {
+            checkDB.close();
+        }
+        return checkDB != null;
+    }
+
+    private void copyDatabase() throws IOException {
+        InputStream input = context.getAssets().open(DATABASE_NAME);
+        String outFileName = DATABASE_PATH + DATABASE_NAME;
+        OutputStream output = new FileOutputStream(outFileName);
+        byte[] buffer = new byte[1024];
+        int length;
+        while ((length = input.read(buffer)) > 0) {
+            output.write(buffer, 0, length);
+        }
+        output.flush();
+        output.close();
+        input.close();
+    }
+
+    @Override
+    public void onCreate(SQLiteDatabase db) {
+        // No need to create tables here
+    }
+
+    @Override
+    public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        // No upgrade logic required for now
+    }
+}
+
+// Product.java
+public class Product implements Serializable {
+
+    private int id;
+    private String name;
+    private String description;
+    private double price;
+    private String imageUrl;
+    private String whatsappContact;
+    private String phoneContact;
+
+    public Product(int id, String name, String description, double price, String imageUrl, String whatsappContact, String phoneContact) {
+        this.id = id;
+        this.name = name;
+        this.description = description;
+        this.price = price;
+        this.imageUrl = imageUrl;
+        this.whatsappContact = whatsappContact;
+        this.phoneContact = phoneContact;
+    }
+
+    public int getId() {
+        return id;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public double getPrice() {
+        return price;
+    }
+
+    public String getImageUrl() {
+        return imageUrl;
+    }
+
+    public String getWhatsappContact() {
+        return whatsappContact;
+    }
+
+    public String getPhoneContact() {
+        return phoneContact;
+    }
+}
+
+// ProductAdapter.java
+public class ProductAdapter extends ArrayAdapter<Product> {
+
+    private final Context context;
+    private final List<Product> products;
+
+    public ProductAdapter(Context context, List<Product> products) {
+        super(context, R.layout.product_list_item, products);
+        this.context = context;
+        this.products = products;
+    }
+
+    @Override
+    public View getView(int position, View convertView, ViewGroup parent) {
+        if (convertView == null) {
+            LayoutInflater inflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+            convertView = inflater.inflate(R.layout.product_list_item, parent, false);
+        }
+
+        ImageView productImageView = convertView.findViewById(R.id.product_image);
+        TextView productNameTextView = convertView.findViewById(R.id.product_name);
+        TextView productPriceTextView = convertView.findViewById(R.id.product_price);
+
+        Product product = products.get(position);
+
+        Picasso.get().load(product.getImageUrl()).into(productImageView);
+        productNameTextView.setText(product.getName());
+        productPriceTextView.setText(String.valueOf(product.getPrice()));
+
+        return convertView;
+    }
+}
+
+// activity_main.xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <EditText
+        android:id="@+id/username"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Username" />
+
+    <Button
+        android:id="@+id/register_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Register" />
+</LinearLayout>
+
+// activity_product_list.xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <ListView
+        android:id="@+id/product_list"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+</LinearLayout>
+
+// activity_product_detail.xml
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <ImageView
+            android:id="@+id/product_image"
+            android:layout_width="match_parent"
+            android:layout_height="200dp"
+            android:scaleType="centerCrop" />
+
+        <TextView
+            android:id="@+id/product_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:paddingTop="16dp" />
+
+        <TextView
+            android:id="@+id/product_description"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="8dp" />
+
+        <TextView
+            android:id="@+id/product_price"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:paddingTop="8dp" />
+
+        <Button
+            android:id="@+id/whatsapp_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Contact on WhatsApp"
+            android:layout_marginTop="16dp" />
+
+        <Button
+            android:id="@+id/phone_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Call" />
+    </LinearLayout>
+</ScrollView>
+
+// product_list_item.xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="8dp">
+
+    <ImageView
+        android:id="@+id/product_image"
+        android:layout_width="80dp"
+        android:layout_height="80dp"
+        android:scaleType="centerCrop" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:paddingStart="8dp">
+
+        <TextView
+            android:id="@+id/product_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textStyle="bold"
+            android:textSize="18sp" />
+
+        <TextView
+            android:id="@+id/product_price"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="16sp"
+            android:paddingTop="4dp" />
+    </LinearLayout>
+</LinearLayout>
